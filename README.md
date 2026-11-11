@@ -85,6 +85,17 @@ com.aios.osbot.tools.phone.engine.CallConversationEngine // Agent 引擎
 
 点类别名（蓝色字）直接编辑，改过的会标「· 已改」，弹窗里有「恢复默认」。内置 6 套按语音场景写的默认话术——纯口语、短句、不带列表符号，因为这句话是要被 TTS 念出来的。
 
+**通话中开关**
+
+设置页顶部有「通话中 · 小爱自动回复」开关，通话中途随时切换：
+
+- 关闭 → 小爱立刻停嘴，把话头交给你（`pauseAiAssist()`）
+- 打开 → 小爱继续自动应答（`resumeAiAssist()`）
+
+实现上直接调用引擎的 `pauseAiAssist` / `resumeAiAssist`，而不是只写配置键——这样不依赖引擎内部状态判断，点了就生效。同时写一次 `ai_call_trigger_answer` 让原生 UI 的开关状态同步，通话结束自动复位，不会影响下一通电话的自动接听策略。
+
+> 只有 **AI 自动接听的通话** 才有这个能力。人工接听的电话小爱本来就不参与（`onCallActive()` 里 `autoAnsweredByAi=false` 直接返回，不创建引擎），此时开关会提示「这通电话可能不是 AI 接听的」。
+
 **模型接入**
 
 - 任意 OpenAI 兼容 `/chat/completions` 端点，填 Base URL + 模型名 + API Key

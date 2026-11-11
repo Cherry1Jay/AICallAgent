@@ -2,7 +2,11 @@ package com.cherryjay.aicallagent;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -23,6 +27,8 @@ public class SettingsActivity extends Activity {
 
     private Switch swEnabled;
     private Switch swFallback;
+    private Switch swAiReply;
+    private TextView tvAiReplyState;
     private EditText etBaseUrl;
     private EditText etApiKey;
     private EditText etModel;
@@ -48,6 +54,14 @@ public class SettingsActivity extends Activity {
     private Config mCfg;
 
     private final Handler main = new Handler(Looper.getMainLooper());
+
+    /** 与小爱进程里的 Hook 通讯 */
+    private static final String ACTION_CONTROL = "com.cherryjay.aicallagent.CONTROL";
+    private static final String ACTION_STATE = "com.cherryjay.aicallagent.STATE";
+    private static final String TARGET_PKG = "com.miui.voiceassist";
+
+    private BroadcastReceiver stateReceiver;
+    private boolean awaitingReply;
 
     private static final String[][] CATS = {
             {Category.TAKEOUT, "外卖送餐"},
@@ -103,7 +117,84 @@ public class SettingsActivity extends Activity {
         findViewById(R.id.btn_log).setOnClickListener(v ->
                 startActivity(new Intent(this, LogActivity.class)));
 
+        swAiReply = findViewById(R.id.sw_ai_reply);
+        tvAiReplyState = findViewById(R.id.tv_ai_reply_state);
+        bindAiReplySwitch();
+        registerStateReceiver();
+
         setStatus("当前：" + currentSummary(), false);
+    }
+
+    // ------------------------------------------------------- 通话中开关
+
+    /** 开关本身不做配置持久化，只是给 Hook 发一条指令；真实状态由通话进程回传 */
+    private void bindAiReplySwitch() {
+        swAiReply.setChecked(Config.prefs(this).getBoolean("ui_ai_reply", true));
+        swAiReply.setOnCheckedChangeListener((btn, checked) -> sendAiReply(checked));
+    }
+
+    private void sendAiReply(boolean on) {
+        Config.prefs(this).edit().putBoolean("ui_ai_reply", on).apply();
+
+        Intent i = new Intent(ACTION_CONTROL);
+        i.setPackage(TARGET_PKG);
+        i.putExtra("cmd", "ai_reply");
+        i.putExtra("on", on);
+        try {
+            sendBroadcast(i);
+        } catch (Throwable t) {
+            tvAiReplyState.setText("状态：发送失败 —— " + t.getMessage());
+            return;
+        }
+
+        awaitingReply = true;
+        tvAiReplyState.setText("状态：已发送「" + (on ? "继续应答" : "暂停") + "」，等待小爱响应…");
+        main.postDelayed(() -> {
+            if (awaitingReply) {
+                awaitingReply = false;
+                tvAiReplyState.setText("状态：小爱没有响应。确认 LSPosed 里已启用本模块，并重启过小爱进程。");
+            }
+        }, 2500);
+    }
+
+    private void registerStateReceiver() {
+        stateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent intent) {
+                awaitingReply = false;
+                boolean inCall = intent.getBooleanExtra("inCall", false);
+                boolean paused = intent.getBooleanExtra("paused", true);
+                boolean acted = intent.getBooleanExtra("acted", false);
+
+                String s;
+                if (!inCall) {
+                    s = "状态：当前没有通话。开关会在下一通 AI 接听的通话里生效。";
+                } else if (!acted) {
+                    s = "状态：在通话中，但没能驱动引擎 —— 这通电话可能不是 AI 接听的。";
+                } else {
+                    s = "状态：通话中 · 小爱" + (paused ? "已暂停，把话头交给你" : "正在自动应答");
+                }
+                tvAiReplyState.setText(s);
+            }
+        };
+        IntentFilter f = new IntentFilter(ACTION_STATE);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(stateReceiver, f, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(stateReceiver, f);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (stateReceiver != null) {
+            try {
+                unregisterReceiver(stateReceiver);
+            } catch (Throwable ignored) {
+            }
+            stateReceiver = null;
+        }
+        super.onDestroy();
     }
 
     private void bindPromptEntries() {

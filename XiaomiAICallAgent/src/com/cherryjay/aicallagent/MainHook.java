@@ -1,8 +1,12 @@
 package com.cherryjay.aicallagent;
 
+import android.content.BroadcastReceiver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -46,6 +50,14 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String YELLOW_PAGE_CLS = "miui.yellowpage.YellowPageUtils";
     private static final String CONFIG_AUTHORITY = "ai-assist-call-config";
     private static final String KEY_REPLY_LOG = "ai_call_reply_log_content";
+    private static final String KEY_TRIGGER_ANSWER = "ai_call_trigger_answer";
+
+    /** App -> Hook：通话中开关指令 */
+    private static final String ACTION_CONTROL = "com.cherryjay.aicallagent.CONTROL";
+    /** Hook -> App：执行结果回传 */
+    private static final String ACTION_STATE = "com.cherryjay.aicallagent.STATE";
+    private static final String APP_PKG = "com.cherryjay.aicallagent";
+    private static final String CMD_AI_REPLY = "ai_reply";
 
     private static final long SESSION_GAP_MS = 5 * 60 * 1000L;
     private static final long SPEAK_TIMEOUT_MS = 60 * 1000L;
@@ -61,6 +73,10 @@ public class MainHook implements IXposedHookLoadPackage {
     /** 当前通话信息，由 OsbotInCallService.onCallAdded 捕获 */
     private static volatile String sNumber = "";
     private static volatile String sCallerName = "";
+
+    /** InCallService 实例，通话中开关要直接驱动它的 pause/resume */
+    private static volatile Object sService;
+    private static volatile boolean sReceiverInstalled;
 
     private static final Map<String, Cached> sCategoryCache = new ConcurrentHashMap<>();
 
@@ -89,7 +105,25 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(serviceCls, "onCallAdded", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
+                    sService = param.thisObject;
+                    if (!sReceiverInstalled) {
+                        scheduleInstallReceiver();
+                    }
                     captureCall(param.args);
+                }
+            });
+            XposedBridge.hookAllMethods(serviceCls, "onCallRemoved", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    sService = null;
+                    // 通话结束把开关键复位，避免影响下一通来电的自动接听策略
+                    try {
+                        Context ctx = AndroidAppHelper.currentApplication();
+                        if (ctx != null) {
+                            putConfig(ctx, KEY_TRIGGER_ANSWER, "");
+                        }
+                    } catch (Throwable ignored) {
+                    }
                 }
             });
         } catch (Throwable t) {
@@ -112,6 +146,142 @@ public class MainHook implements IXposedHookLoadPackage {
             log("Hook 就绪，suspend 哨兵=" + sSuspendedSentinel);
         } catch (Throwable t) {
             log("引擎钩子失败：" + t);
+        }
+
+        // 通话中开关：App 发广播 -> 这里以小爱进程的权限写配置 / 直接驱动引擎
+        // 小爱有 core / voice_trigger 等多个进程，只有主进程持有 InCallService，只在主进程注册
+        if (TARGET_PKG.equals(lp.processName)) {
+            scheduleInstallReceiver();
+        }
+    }
+
+    // ------------------------------------------------------- 通话中开关
+
+    /** 注入瞬间 Application 还没建好，需要重试；通话开始时也会再补一次 */
+    private void scheduleInstallReceiver() {
+        final Handler h = new Handler(Looper.getMainLooper());
+        final int[] tries = {0};
+        Runnable r = new Runnable() {
+            @Override
+            public void run() {
+                if (sReceiverInstalled) {
+                    return;
+                }
+                Context ctx = AndroidAppHelper.currentApplication();
+                if (ctx != null) {
+                    installControlReceiver(ctx);
+                    return;
+                }
+                if (++tries[0] < 20) {
+                    h.postDelayed(this, 500);
+                } else {
+                    log("控制通道：拿不到 Context，等通话开始再补注册");
+                }
+            }
+        };
+        h.postDelayed(r, 300);
+    }
+
+    private void installControlReceiver(final Context ctx) {
+        if (sReceiverInstalled) {
+            return;
+        }
+        try {
+            BroadcastReceiver receiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context c, Intent intent) {
+                    try {
+                        handleControl(ctx, intent);
+                    } catch (Throwable t) {
+                        log("处理开关指令失败：" + t);
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter(ACTION_CONTROL);
+            if (Build.VERSION.SDK_INT >= 33) {
+                ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                ctx.registerReceiver(receiver, filter);
+            }
+            sReceiverInstalled = true;
+            log("控制通道就绪，等待 App 指令");
+        } catch (Throwable t) {
+            log("registerReceiver 失败：" + t);
+        }
+    }
+
+    /**
+     * on=true  -> 恢复 AI 应答（resumeAiAssist）
+     * on=false -> 暂停 AI 应答（pauseAiAssist），把话头交回机主
+     * 两个方法都是 public，且内部幂等，可以直接调。
+     */
+    private void handleControl(Context ctx, Intent in) {
+        String cmd = in.getStringExtra("cmd");
+        if (!CMD_AI_REPLY.equals(cmd)) {
+            return;
+        }
+        boolean on = in.getBooleanExtra("on", false);
+
+        Object svc = sService;
+        boolean inCall = false;
+        if (svc != null) {
+            try {
+                inCall = XposedHelpers.getObjectField(svc, "currentCall") != null;
+            } catch (Throwable ignored) {
+            }
+        }
+
+        boolean acted = false;
+        if (svc != null && inCall) {
+            try {
+                XposedHelpers.callMethod(svc, on ? "resumeAiAssist" : "pauseAiAssist");
+                acted = true;
+            } catch (Throwable t) {
+                log("调用 " + (on ? "resumeAiAssist" : "pauseAiAssist") + " 失败：" + t);
+            }
+        }
+
+        // 同步给 InCallUI 的开关状态（通话结束时会复位）
+        if (inCall) {
+            putConfig(ctx, KEY_TRIGGER_ANSWER, on ? "true" : "false");
+        }
+
+        boolean paused = true;
+        if (svc != null) {
+            try {
+                paused = XposedHelpers.getBooleanField(svc, "isAiAssistPaused");
+            } catch (Throwable ignored) {
+            }
+        }
+
+        log("通话中开关：" + (on ? "开" : "关")
+                + "，通话中=" + inCall + "，已调用=" + acted + "，当前暂停=" + paused);
+        LogProvider.appendFromHook(ctx, CallLogStore.TYPE_INFO,
+                "通话中开关 → " + (on ? "小爱继续应答" : "小爱暂停")
+                        + (inCall ? "" : "（当前没有通话，仅记录）"));
+
+        try {
+            Intent out = new Intent(ACTION_STATE);
+            out.setPackage(APP_PKG);
+            out.putExtra("inCall", inCall);
+            out.putExtra("paused", paused);
+            out.putExtra("requested", on);
+            out.putExtra("acted", acted);
+            ctx.sendBroadcast(out);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean putConfig(Context ctx, String key, String value) {
+        try {
+            Uri uri = Uri.parse("content://" + CONFIG_AUTHORITY + "/settings/" + key);
+            ContentValues cv = new ContentValues();
+            cv.put("key", key);
+            cv.put("value", value);
+            return ctx.getContentResolver().insert(uri, cv) != null;
+        } catch (Throwable t) {
+            log("写配置失败 " + key + "：" + t);
+            return false;
         }
     }
 
