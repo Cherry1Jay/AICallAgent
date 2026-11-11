@@ -1,4 +1,4 @@
-package com.cherryjay.aicallagent;
+package io.github.cherry1jay.aicallagent;
 
 import android.app.Activity;
 import android.os.Bundle;

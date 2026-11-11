@@ -9,15 +9,15 @@
 #   JAVA_HOME                         JDK 路径（需 11+）
 #   KS_PASS                           已有 keystore.jks 的密码（首次构建会自动生成）
 #   KS_PATH                           keystore 路径，默认 ./keystore.jks
-#   VERSION_NAME / VERSION_CODE       版本号，默认 1.0 / 1
+#   VERSION_NAME / VERSION_CODE       版本号，默认 1.2 / 3
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 PROJ="$ROOT/XiaomiAICallAgent"
 BUILD="$ROOT/build"
 
-VERSION_NAME="${VERSION_NAME:-1.0}"
-VERSION_CODE="${VERSION_CODE:-1}"
+VERSION_NAME="${VERSION_NAME:-1.2}"
+VERSION_CODE="${VERSION_CODE:-3}"
 OUT="$ROOT/AICallAgent-$VERSION_NAME.apk"
 
 # ---- 平台差异 ---------------------------------------------------------------

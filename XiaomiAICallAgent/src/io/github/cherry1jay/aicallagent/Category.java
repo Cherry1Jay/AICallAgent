@@ -1,4 +1,4 @@
-package com.cherryjay.aicallagent;
+package io.github.cherry1jay.aicallagent;
 
 /**
  * 来电类型判定。

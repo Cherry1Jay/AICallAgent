@@ -1,4 +1,4 @@
-package com.cherryjay.aicallagent;
+package io.github.cherry1jay.aicallagent;
 
 import android.content.ContentValues;
 import android.content.Context;

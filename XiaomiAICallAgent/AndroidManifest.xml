@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.cherryjay.aicallagent"
-    android:versionCode="2"
-    android:versionName="1.1">
+    package="io.github.cherry1jay.aicallagent"
+    android:versionCode="3"
+    android:versionName="1.2">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -47,7 +47,7 @@
              调用方在 call() 里按包名校验，只有 com.miui.voiceassist 能拿到配置。 -->
         <provider
             android:name=".LogProvider"
-            android:authorities="com.cherryjay.aicallagent.log"
+            android:authorities="io.github.cherry1jay.aicallagent.log"
             android:exported="true"
             android:grantUriPermissions="false" />
 

@@ -1,4 +1,6 @@
-# AICallAgent
+# AICallAgent · AI 通话接管
+
+`io.github.cherry1jay.aicallagent`
 
 把小米「AI 通话」的大脑换成你自己的大模型。
 
@@ -122,7 +124,7 @@ com.aios.osbot.tools.phone.engine.CallConversationEngine // Agent 引擎
 
 **前提**：已 root（KernelSU / Magisk / APatch）+ LSPosed，Android 12 以上；系统「AI 通话」本身可用（设置 → 电话 → AI 通话，开启自动接听）。
 
-1. 安装 `AICallAgent-x.x.apk`
+1. 安装 `AICallAgent-x.x.apk`（应用列表里显示为「AI 通话接管」，包名 `io.github.cherry1jay.aicallagent`）
 2. 打开 LSPosed → 模块 → 启用 **AICallAgent**
 3. 作用域**只勾选「小爱同学」**（`com.miui.voiceassist`），不需要勾系统框架或拨号
 4. 软重启小爱（**不用重启手机**）：
@@ -162,7 +164,7 @@ adb logcat | grep AICallAgent
 ```bash
 export ANDROID_HOME=/path/to/Android/Sdk
 bash build.sh
-# 产物：AICallAgent-1.1.apk
+# 产物：AICallAgent-1.2.apk
 ```
 
 脚本流程：`aapt2 compile` → `aapt2 link` → `javac` → `d8` → `jar` 塞 dex → `zipalign` → `apksigner`。
@@ -175,6 +177,13 @@ bash build.sh
 ---
 
 ## 更新日志
+
+### v1.2 — 包名变更，上架 LSPosed 模块仓库
+
+- **包名**：`com.cherryjay.aicallagent` → `io.github.cherry1jay.aicallagent`
+  LSPosed 模块仓库要求应用 ID 反写的域名归开发者所有，旧包名对应的 `cherryjay.com` 并不属于本作者，因此改用 `io.github.` 前缀。
+  **这是一次全新安装**：请先卸载旧版再装 1.2，配置（API Key、人设、各类提示词）需要重新填一次。
+- 构建脚本支持 `VERSION_CODE` / `VERSION_NAME` 环境变量，产物名跟随版本号
 
 ### v1.1 — 修复「填了 Key 却不生效」和「连续对话卡住」
 

@@ -1,4 +1,4 @@
-package com.cherryjay.aicallagent;
+package io.github.cherry1jay.aicallagent;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -14,7 +14,7 @@ import java.util.List;
  */
 public class LogProvider extends ContentProvider {
 
-    public static final String AUTHORITY = "com.cherryjay.aicallagent.log";
+    public static final String AUTHORITY = "io.github.cherry1jay.aicallagent.log";
     static final String METHOD_APPEND = "append";
     static final String METHOD_CLEAR = "clear";
     static final String METHOD_DUMP = "dump";

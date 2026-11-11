@@ -1,4 +1,4 @@
-package com.cherryjay.aicallagent;
+package io.github.cherry1jay.aicallagent;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -14,7 +14,7 @@ import android.os.Bundle;
 public final class Config {
 
     static final String PREFS = "aicall_agent";
-    static final String MODULE_PKG = "com.cherryjay.aicallagent";
+    static final String MODULE_PKG = "io.github.cherry1jay.aicallagent";
 
     static final String[] CATS = {
             Category.TAKEOUT, Category.DELIVERY, Category.SPAM,
