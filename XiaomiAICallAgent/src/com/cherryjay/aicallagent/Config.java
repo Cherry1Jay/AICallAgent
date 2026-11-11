@@ -2,13 +2,24 @@ package com.cherryjay.aicallagent;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Bundle;
 
 /**
  * 模块配置。所有字段都从 SharedPreferences 读，Hook 端与设置页共用。
+ *
+ * 注意：Hook 跑在 com.miui.voiceassist 进程里，AndroidAppHelper.currentApplication()
+ * 给的是小爱自己的 Context，直接读 SharedPreferences 只会读到小爱的私有目录。
+ * 所以跨进程时改走模块自己的 ContentProvider 取值。
  */
 public final class Config {
 
     static final String PREFS = "aicall_agent";
+    static final String MODULE_PKG = "com.cherryjay.aicallagent";
+
+    static final String[] CATS = {
+            Category.TAKEOUT, Category.DELIVERY, Category.SPAM,
+            Category.SERVICE, Category.CONTACT, Category.UNKNOWN
+    };
 
     public static final String K_ENABLED = "enabled";
     public static final String K_BASE_URL = "base_url";
@@ -36,6 +47,9 @@ public final class Config {
     // 开场白（对应小爱自己的 ai_custom_opening_* 配置键，留空则用系统默认）
     public static final String K_OPENING_ACQ = "opening_acquaintance";
     public static final String K_OPENING_STR = "opening_stranger";
+    /** 熟人来电的默认开场白（猫娘口吻，留空则用系统自带开场白） */
+    public static final String DEF_OPENING_ACQ =
+            "喂，是亲亲呀。主人现在忙着呢，人家是他的猫娘助理。有事跟人家说就好喵。";
 
     public static final String DEF_BASE_URL = "https://api.deepseek.com/v1";
     public static final String DEF_MODEL = "deepseek-chat";
@@ -79,7 +93,7 @@ public final class Config {
     /** 手动接管时忽略上面的分类开关：用户主动点了按钮，就是要 AI 接，不该被类型规则挡掉 */
     public boolean manualIgnoreCategory = true;
     /** 开场白：熟人 / 陌生号。空字符串 = 用系统默认 */
-    public String openingAcquaintance = "";
+    public String openingAcquaintance = DEF_OPENING_ACQ;
     public String openingStranger = "";
 
     /** 各类型的场景提示词，key 为 Category 常量；空则用 Prompts 的默认值 */
@@ -89,8 +103,95 @@ public final class Config {
         return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    /** 本进程直接读 SharedPreferences；别的进程（小爱）绕道 ContentProvider */
     public static Config load(Context ctx) {
-        SharedPreferences sp = prefs(ctx);
+        if (ctx == null) {
+            return new Config();
+        }
+        if (!MODULE_PKG.equals(ctx.getPackageName())) {
+            Config remote = loadFromProvider(ctx);
+            if (remote != null) {
+                return remote;
+            }
+        }
+        return fromPrefs(prefs(ctx));
+    }
+
+    /** 由模块进程代读，把整份配置塞进 Bundle 返回给 Hook */
+    public static Bundle snapshot(Context ctx) {
+        Config c = fromPrefs(prefs(ctx));
+        Bundle b = new Bundle();
+        b.putBoolean(K_ENABLED, c.enabled);
+        b.putString(K_BASE_URL, c.baseUrl);
+        b.putString(K_API_KEY, c.apiKey);
+        b.putString(K_MODEL, c.model);
+        b.putString(K_SYSTEM_PROMPT, c.systemPrompt);
+        b.putInt(K_TIMEOUT, c.timeoutSec);
+        b.putFloat(K_TEMPERATURE, c.temperature);
+        b.putBoolean(K_STRIP_THINKING, c.stripThinking);
+        b.putInt(K_MAX_HISTORY, c.maxHistory);
+        b.putBoolean(K_FALLBACK, c.fallback);
+        b.putBoolean(K_DEBUG, c.debug);
+        b.putBoolean(K_USE_TAKEOUT, c.useForTakeout);
+        b.putBoolean(K_USE_DELIVERY, c.useForDelivery);
+        b.putBoolean(K_USE_SPAM, c.useForSpam);
+        b.putBoolean(K_USE_SERVICE, c.useForService);
+        b.putBoolean(K_USE_CONTACT, c.useForContact);
+        b.putBoolean(K_USE_UNKNOWN, c.useForUnknown);
+        b.putBoolean(K_MANUAL_TAKEOVER, c.manualTakeover);
+        b.putBoolean(K_MANUAL_IGNORE_CATEGORY, c.manualIgnoreCategory);
+        b.putString(K_OPENING_ACQ, c.openingAcquaintance);
+        b.putString(K_OPENING_STR, c.openingStranger);
+        for (String cat : CATS) {
+            b.putString(Prompts.prefKey(cat), c.prompts.get(cat));
+        }
+        return b;
+    }
+
+    private static Config loadFromProvider(Context ctx) {
+        try {
+            Bundle b = ctx.getContentResolver()
+                    .call(LogProvider.uri(), LogProvider.METHOD_CONFIG, null, null);
+            android.util.Log.i("AICallAgent", "配置读取：caller=" + ctx.getPackageName()
+                    + " bundle=" + (b == null ? "null" : ("size=" + b.size()
+                    + " keyLen=" + (b.getString(K_API_KEY) == null ? -1 : b.getString(K_API_KEY).length()))));
+            if (b == null || b.isEmpty()) {
+                return null;
+            }
+            Config c = new Config();
+            c.enabled = b.getBoolean(K_ENABLED, true);
+            c.baseUrl = b.getString(K_BASE_URL, DEF_BASE_URL);
+            c.apiKey = b.getString(K_API_KEY, "");
+            c.model = b.getString(K_MODEL, DEF_MODEL);
+            c.systemPrompt = b.getString(K_SYSTEM_PROMPT, DEF_SYSTEM_PROMPT);
+            c.timeoutSec = b.getInt(K_TIMEOUT, 12);
+            c.temperature = b.getFloat(K_TEMPERATURE, 0.7f);
+            c.stripThinking = b.getBoolean(K_STRIP_THINKING, true);
+            c.maxHistory = b.getInt(K_MAX_HISTORY, 12);
+            c.fallback = b.getBoolean(K_FALLBACK, true);
+            c.debug = b.getBoolean(K_DEBUG, true);
+            c.useForTakeout = b.getBoolean(K_USE_TAKEOUT, true);
+            c.useForDelivery = b.getBoolean(K_USE_DELIVERY, true);
+            c.useForSpam = b.getBoolean(K_USE_SPAM, false);
+            c.useForService = b.getBoolean(K_USE_SERVICE, true);
+            c.useForContact = b.getBoolean(K_USE_CONTACT, true);
+            c.useForUnknown = b.getBoolean(K_USE_UNKNOWN, true);
+            c.manualTakeover = b.getBoolean(K_MANUAL_TAKEOVER, true);
+            c.manualIgnoreCategory = b.getBoolean(K_MANUAL_IGNORE_CATEGORY, true);
+            c.openingAcquaintance = b.getString(K_OPENING_ACQ, DEF_OPENING_ACQ);
+            c.openingStranger = b.getString(K_OPENING_STR, "");
+            for (String cat : CATS) {
+                String v = b.getString(Prompts.prefKey(cat));
+                c.prompts.put(cat, v == null ? Prompts.defaultFor(cat) : v);
+            }
+            return c;
+        } catch (Throwable t) {
+            android.util.Log.e("AICallAgent", "配置读取失败", t);
+            return null;
+        }
+    }
+
+    static Config fromPrefs(SharedPreferences sp) {
         Config c = new Config();
         c.enabled = sp.getBoolean(K_ENABLED, true);
         c.baseUrl = sp.getString(K_BASE_URL, DEF_BASE_URL);
@@ -111,10 +212,9 @@ public final class Config {
         c.useForUnknown = sp.getBoolean(K_USE_UNKNOWN, true);
         c.manualTakeover = sp.getBoolean(K_MANUAL_TAKEOVER, true);
         c.manualIgnoreCategory = sp.getBoolean(K_MANUAL_IGNORE_CATEGORY, true);
-        c.openingAcquaintance = sp.getString(K_OPENING_ACQ, "");
+        c.openingAcquaintance = sp.getString(K_OPENING_ACQ, DEF_OPENING_ACQ);
         c.openingStranger = sp.getString(K_OPENING_STR, "");
-        for (String cat : new String[]{Category.TAKEOUT, Category.DELIVERY, Category.SPAM,
-                Category.SERVICE, Category.CONTACT, Category.UNKNOWN}) {
+        for (String cat : CATS) {
             c.prompts.put(cat, sp.getString(Prompts.prefKey(cat), Prompts.defaultFor(cat)));
         }
         return c;

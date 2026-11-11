@@ -62,7 +62,8 @@ com.aios.osbot.tools.phone.engine.CallConversationEngine // Agent 引擎
 
 1. **只换大脑，不换嘴**。播报调用引擎自己的 `speakFn`，音频注入、回声消除、打断处理全部原生，不需要碰 AudioTrack，也不会和系统抢麦克风。
 2. **必须补发回合结束信号**。接管后原生状态机收不到 `onAgentTurnComplete` 会停在「思考中」不再监听，所以播报完成后反射调用它收尾。
-3. **超时必回落**。模型 12 秒没回（可配）就放弃接管、把这一轮交还原生 LLM，避免通话里长时间静默。
+3. **超时必兜底**。整轮（分类 + 模型）有 9 秒硬上限，超时就自己说一句过渡话术把状态机推下去；播报本身另有 8 秒兜底补发回合结束信号。这两道保险缺一不可——回合已经被拦下，卡住就意味着整通电话停在「AI 自动回复中」。
+4. **日志绝不阻塞通话线程**。跨进程写通话记录走独立线程，否则模块进程被回收时，一个 `ContentResolver.call` 就能把引擎线程一起卡死。
 
 ---
 
@@ -76,7 +77,7 @@ com.aios.osbot.tools.phone.engine.CallConversationEngine // Agent 引擎
 | 快递物流 | 快递、物流、驿站、顺丰、圆通、中通、菜鸟、包裹… | 接入 |
 | 广告推销 | 骚扰、推销、广告、中介、保险、贷款、理财、催收、诈骗… | **交回原生** |
 | 客服官方 | 客服、官方、银行、航空、运营商、政务、医院、售后… | 接入 |
-| 通讯录联系人 | 号码在通讯录里 | 接入 |
+| 通讯录联系人 | 号码在通讯录里（模块自己查 `PhoneLookup`） | 接入 |
 | 陌生号码 | 以上都不命中 | 接入 |
 
 黄页查不到标签时按号码特征兜底：5–6 位短号、`400`/`800` 开头判客服，`95` 开头短号判客服。
@@ -95,7 +96,7 @@ com.aios.osbot.tools.phone.engine.CallConversationEngine // Agent 引擎
 |---|---|
 | 手动接管 · 小爱帮我回 | 开 = 点按钮后由你的大模型应答；关 = 仍用小爱原生模型 |
 | 忽略来电类型开关 | 手动点了就代表你要 AI 接，不再被上面的类型分流挡回原生（默认开） |
-| 开场白（选填） | 接管后说的第一句。写进小爱的 `ai_custom_opening_acquaintance` / `ai_custom_opening_stranger`，留空保留系统默认 |
+| 开场白（选填） | 接管后说的第一句。写进小爱的 `ai_custom_opening_acquaintance` / `ai_custom_opening_stranger`，留空保留系统默认。熟人开场白默认内置了一句猫娘口吻的短句，可自行改写 |
 
 两个实现细节值得记一笔：
 
@@ -161,7 +162,7 @@ adb logcat | grep AICallAgent
 ```bash
 export ANDROID_HOME=/path/to/Android/Sdk
 bash build.sh
-# 产物：AICallAgent-1.0.apk
+# 产物：AICallAgent-1.1.apk
 ```
 
 脚本流程：`aapt2 compile` → `aapt2 link` → `javac` → `d8` → `jar` 塞 dex → `zipalign` → `apksigner`。
@@ -170,6 +171,42 @@ bash build.sh
 - 已有 keystore 时用 `KS_PASS=你的密码 bash build.sh`
 - `libs/api82.jar` 是 Xposed API 82（Apache-2.0），已内置，clone 即可构建
 - 换图标：改 `genicon.py` 后 `python genicon.py`
+
+---
+
+## 更新日志
+
+### v1.1 — 修复「填了 Key 却不生效」和「连续对话卡住」
+
+v1.0 在真机上跑不通，两个致命 bug：
+
+**1. 配置永远读不到（表现为一直走原生回复、token 不消耗）**
+
+Hook 跑在小爱进程里，`AndroidAppHelper.currentApplication()` 拿到的是**小爱自己的 Context**，`getSharedPreferences` 读的是小爱私有目录 → 永远是空的。同时 `AndroidManifest.xml` 里压根没声明那个用来跨进程读配置的 `ContentProvider`，所以原本设计的读取通道一直是静默失败。
+
+修法：`Config.load()` 判断当前进程包名，不是自己就走 `ContentResolver.call` 让模块进程代读；补上 provider 声明，并在 provider 里用 `getCallingPackage()` 只放行 `com.miui.voiceassist`，防止 API Key 被任意应用读走。
+
+> 顺带踩到一个坑：模块的 prefs 落点不是 `/data/data/<pkg>/shared_prefs/`，而在 `/data/misc/apexdata/<uuid>/prefs/<pkg>/`，手工改配置要认准这个路径。
+
+**2. 连续对话会卡死（界面停在「AI 自动回复中」）**
+
+三个原因叠在一起：
+
+| 原因 | 修法 |
+|---|---|
+| 分类 + 模型调用是裸调用，DNS 解析或通讯录查询一卡，回合就永远不结束 | 整轮放进 `FutureTask`，9 秒硬超时，超时播一句过渡话术 |
+| 跨进程写通话日志是同步 `ContentResolver.call`，阻塞引擎线程 | 日志全部改走独立线程，绝不阻塞通话线程 |
+| 播报兜底等 60 秒才补发 `onAgentTurnComplete` | 压到 8 秒，另加 15 秒看门狗强制收尾 |
+
+**3. 熟人被当成陌生号码**
+
+Telecom 给的 `callerDisplayName` 日常来电基本都是空的，靠它判断「是否联系人」必然失败，结果熟人听到的是陌生号话术。改成模块自己用号码查 `ContactsContract.PhoneLookup`（小爱进程本身就有 `READ_CONTACTS`）。
+
+**4. 其它**
+
+- 内置提示词调整：通讯录联系人默认改为猫娘口吻（每句结尾带「喵」、自称「人家」），可在设置页逐字改
+- 熟人开场白内置默认值，短句 + 句号停顿，避免 TTS 念长句吞字
+- `takeOverCallWithAi` 在一通电话里会被回调七八次，每次重置对话历史会丢掉多轮上下文 → 按通话去重，实测降为 1 次
 
 ---
 

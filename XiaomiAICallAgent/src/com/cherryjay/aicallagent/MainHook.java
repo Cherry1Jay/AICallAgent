@@ -2,9 +2,11 @@ package com.cherryjay.aicallagent;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.ContactsContract;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Member;
@@ -16,6 +18,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import android.app.AndroidAppHelper;
@@ -51,10 +55,11 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String KEY_OPENING_STR = "ai_custom_opening_stranger";
 
     private static final long SESSION_GAP_MS = 5 * 60 * 1000L;
-    private static final long SPEAK_TIMEOUT_MS = 60 * 1000L;
+    private static final long SPEAK_TIMEOUT_MS = 8 * 1000L;
     private static final long CATEGORY_TTL_MS = 10 * 60 * 1000L;
 
     private static ExecutorService sWorker;
+    private static ExecutorService sLogPool;
     private static final Object LOCK = new Object();
     private static final List<LlmClient.Msg> sHistory = new ArrayList<>();
     private static long sLastTurnAt;
@@ -70,6 +75,9 @@ public class MainHook implements IXposedHookLoadPackage {
      * 手动接管算明确指令，不该再被来电分类开关挡掉。
      */
     private static volatile boolean sManualTakeover;
+
+    /** 这通电话是否已经初始化过接管，避免重复回调反复清空对话上下文 */
+    private static volatile boolean sTakeoverInit;
 
     private static final Map<String, Cached> sCategoryCache = new ConcurrentHashMap<>();
 
@@ -98,6 +106,7 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(serviceCls, "onCallAdded", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
+                    sTakeoverInit = false;
                     captureCall(param.args);
                 }
             });
@@ -105,6 +114,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     sManualTakeover = false;
+                    sTakeoverInit = false;
                     resetHistory();
                 }
             });
@@ -176,6 +186,12 @@ public class MainHook implements IXposedHookLoadPackage {
             log("复位暂停标记失败：" + t);
         }
 
+        // 同一通电话里 takeOverCallWithAi 会被反复回调（实测一通电话触发七八次），
+        // 每次都重置历史会让多轮对话丢掉上下文，这里按通话去重：每通电话只初始化一次。
+        if (sTakeoverInit) {
+            return;
+        }
+
         final Context ctx = AndroidAppHelper.currentApplication();
         if (ctx == null) {
             sManualTakeover = false;
@@ -187,9 +203,10 @@ public class MainHook implements IXposedHookLoadPackage {
         sManualTakeover = cfg.enabled && cfg.manualTakeover;
         resetHistory();
         writeOpening(ctx, cfg);
+        sTakeoverInit = true;
 
         log("检测到手动接管（小爱帮我回）→ " + (sManualTakeover ? "本通用大模型" : "仍走原生话术"));
-        LogProvider.appendFromHook(ctx, CallLogStore.TYPE_INFO,
+        logAsync(ctx, CallLogStore.TYPE_INFO,
                 sManualTakeover ? "手动 AI 接管 · 已接入大模型" : "手动 AI 接管 · 使用原生话术");
     }
 
@@ -294,10 +311,50 @@ public class MainHook implements IXposedHookLoadPackage {
 
         boolean isContact = sCallerName != null && !sCallerName.isEmpty()
                 && !sCallerName.equals(number) && !isPhoneLike(sCallerName);
+
+        // Telecom 的 callerDisplayName 在日常来电里基本都是空的，
+        // 只靠它会把熟人误判成陌生号码、用错场景话术。这里自己查通讯录兜底。
+        if (!isContact) {
+            String contactName = lookupContactName(ctx, number);
+            if (contactName != null && !contactName.isEmpty()) {
+                sCallerName = contactName;
+                isContact = true;
+                log("通讯录匹配到：" + contactName);
+            }
+        }
+
         String category = Category.classify(tag, isContact, number);
+        log("归类：" + Category.label(category) + "（联系人=" + isContact + "，黄页=" + tag + "）");
 
         sCategoryCache.put(number, new Cached(category, tag));
         return new String[]{category, tag};
+    }
+
+    /** 用号码反查通讯录姓名，小爱进程自带 READ_CONTACTS 权限 */
+    private String lookupContactName(Context ctx, String number) {
+        if (number == null || number.isEmpty()) {
+            return null;
+        }
+        Cursor c = null;
+        try {
+            Uri uri = Uri.withAppendedPath(
+                    ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number));
+            c = ctx.getContentResolver().query(uri,
+                    new String[]{ContactsContract.PhoneLookup.DISPLAY_NAME}, null, null, null);
+            if (c != null && c.moveToFirst()) {
+                return c.getString(0);
+            }
+        } catch (Throwable t) {
+            log("通讯录查询失败：" + t);
+        } finally {
+            if (c != null) {
+                try {
+                    c.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return null;
     }
 
     private String queryYellowPageTag(Context ctx, ClassLoader cl, String number) throws Exception {
@@ -353,60 +410,95 @@ public class MainHook implements IXposedHookLoadPackage {
 
         // 先把这一回合拦下，避免原生模型也说话（重了会串音）
         param.setResult(null);
-        LogProvider.appendFromHook(ctx, CallLogStore.TYPE_REMOTE, sentence);
+        logAsync(ctx, CallLogStore.TYPE_REMOTE, sentence);
+
+        // 看门狗：回合已经被我们拦下，任何一环卡死都必须由我们补一句话推进状态机，
+        // 否则界面会永久停在「AI 自动回复中」。
+        final AtomicBoolean turnDone = new AtomicBoolean(false);
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (!turnDone.get()) {
+                log("本轮 15 秒未收尾，强制播报兜底");
+                speakAndFinish(engine, "不好意思，我这边有点卡，稍后让机主回你电话好吗？");
+            }
+        }, 15 * 1000L);
 
         worker().execute(() -> {
-            // 1) 判定来电类型，决定是否由我们接管
-            String[] ct = resolveCategory(ctx, cl);
-            String category = ct[0];
-            String tag = ct[1];
-            String label = Category.label(category);
-            // 用户手动点了「小爱帮我回」= 明确要 AI 接，按设置可绕过分类开关
-            boolean manualBypass = sManualTakeover && cfg.manualIgnoreCategory;
-            if (!cfg.shouldHandle(category) && !manualBypass) {
-                log("来电类型=" + label + "（标签：" + tag + "），按设置交回原生");
-                LogProvider.appendFromHook(ctx, CallLogStore.TYPE_INFO,
-                        "来电类型【" + label + "】→ 走小米原生" + (tag == null ? "" : "（标签：" + tag + "）"));
-                fallbackToNative(originalMethod, engine, originalArgs);
-                return;
-            }
-            if (manualBypass && !cfg.shouldHandle(category)) {
-                log("来电类型=" + label + " 本应走原生，但用户手动接管，改用大模型");
-            }
-
-            // 2) 调我们的模型
-            long t0 = System.currentTimeMillis();
-            String reply = null;
-            Throwable error = null;
-            List<LlmClient.Msg> history = snapshotHistory(t0);
             try {
-                reply = LlmClient.chat(cfg, history, sentence, cfg.promptFor(category));
+                final long t0 = System.currentTimeMillis();
+                final Turn turn = new Turn();
+
+            // 整轮（分类 + 模型）都放到子线程里跑，并加硬超时。
+            // 之前这里是裸调用，一旦 DNS 解析或通讯录查询卡住，
+            // 原生回合已被 setResult(null) 拦下，通话就会一直卡在「AI 自动回复中」。
+            FutureTask<Void> task = new FutureTask<>(() -> {
+                String[] ct = resolveCategory(ctx, cl);
+                turn.category = ct[0];
+                turn.tag = ct[1];
+                turn.label = Category.label(turn.category);
+
+                boolean manualBypass = sManualTakeover && cfg.manualIgnoreCategory;
+                if (!cfg.shouldHandle(turn.category) && !manualBypass) {
+                    turn.toNative = true;
+                    return null;
+                }
+                if (manualBypass && !cfg.shouldHandle(turn.category)) {
+                    log("来电类型=" + turn.label + " 本应走原生，但用户手动接管，改用大模型");
+                }
+                turn.reply = LlmClient.chat(cfg, snapshotHistory(t0), sentence,
+                        cfg.promptFor(turn.category));
+                return null;
+            });
+            Thread th = new Thread(task, "aicall-agent-turn");
+            th.setDaemon(true);
+            th.start();
+            try {
+                // 通话里静默超过十秒对方就会以为断线，所以整轮硬上限压到 9 秒
+                task.get(9, TimeUnit.SECONDS);
             } catch (Throwable t) {
-                error = t;
+                turn.error = t;
+                task.cancel(true);
             }
 
-            if (reply == null) {
-                String why = error == null ? "模型返回空" : String.valueOf(error.getMessage());
-                log("模型调用失败：" + why);
-                LogProvider.appendFromHook(ctx, CallLogStore.TYPE_ERROR, "模型失败：" + why);
-                if (cfg.fallback) {
-                    log("回落到原生回复");
-                    fallbackToNative(originalMethod, engine, originalArgs);
-                } else {
-                    speakAndFinish(engine, "不好意思，我这边不太方便，稍后让机主回你电话可以吗？");
-                }
+            if (turn.toNative) {
+                log("来电类型=" + turn.label + "（标签：" + turn.tag + "），按设置交回原生");
+                logAsync(ctx, CallLogStore.TYPE_INFO,
+                        "来电类型【" + turn.label + "】→ 走小米原生"
+                                + (turn.tag == null ? "" : "（标签：" + turn.tag + "）"));
+                fallbackToNative(originalMethod, engine, originalArgs);
                 return;
             }
 
             long cost = System.currentTimeMillis() - t0;
-            log("[" + label + "] 回复(" + cost + "ms)：" + reply);
-            LogProvider.appendFromHook(ctx, CallLogStore.TYPE_LOCAL,
-                    reply + "  ·" + cost + "ms · " + label);
-            pushHistory(sentence, reply, cfg.maxHistory);
+            if (turn.reply == null) {
+                String why = turn.error == null ? "模型返回空" : String.valueOf(turn.error);
+                log("模型调用失败（" + cost + "ms）：" + why);
+                logAsync(ctx, CallLogStore.TYPE_ERROR, "模型失败：" + why);
+                // 已经把原生回合拦掉了，这里必须自己说一句把状态机推下去，否则会卡住
+                speakAndFinish(engine, "不好意思，这边信号不太好，我记一下，稍后让机主回你电话好吗？");
+                return;
+            }
 
-            writeReplyLog(ctx, reply);
-            speakAndFinish(engine, reply);
+            log("[" + turn.label + "] 回复(" + cost + "ms)：" + turn.reply);
+            logAsync(ctx, CallLogStore.TYPE_LOCAL,
+                    turn.reply + "  ·" + cost + "ms · " + turn.label);
+            pushHistory(sentence, turn.reply, cfg.maxHistory);
+
+            writeReplyLog(ctx, turn.reply);
+            speakAndFinish(engine, turn.reply);
+            } finally {
+                turnDone.set(true);
+            }
         });
+    }
+
+    /** 一轮处理的结果容器 */
+    private static final class Turn {
+        String category;
+        String tag;
+        String label;
+        String reply;
+        Throwable error;
+        boolean toNative;
     }
 
     private void fallbackToNative(Member originalMethod, Object engine, Object[] args) {
@@ -464,6 +556,42 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     // ------------------------------------------------------------ 工具
+
+    /**
+     * 跨进程写通话日志一律走独立线程。
+     *
+     * 之前这里是同步 ContentResolver.call：一旦模块进程被回收或正在重启，
+     * 这个调用会把引擎的 hook 线程（也就是通话线程）一起卡住，
+     * 表现就是界面停在「AI 自动回复中」再也不动。
+     */
+    private static void logAsync(Context ctx, String type, String text) {
+        if (ctx == null) {
+            return;
+        }
+        final Context app;
+        try {
+            Context c = ctx.getApplicationContext();
+            app = c != null ? c : ctx;
+        } catch (Throwable t) {
+            return;
+        }
+        try {
+            logPool().execute(() -> LogProvider.appendFromHook(app, type, text));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static ExecutorService logPool() {        synchronized (LOCK) {
+            if (sLogPool == null) {
+                sLogPool = Executors.newSingleThreadExecutor(r -> {
+                    Thread t = new Thread(r, "aicall-agent-log");
+                    t.setDaemon(true);
+                    return t;
+                });
+            }
+            return sLogPool;
+        }
+    }
 
     private static ExecutorService worker() {
         synchronized (LOCK) {

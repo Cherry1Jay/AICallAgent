@@ -18,6 +18,10 @@ public class LogProvider extends ContentProvider {
     static final String METHOD_APPEND = "append";
     static final String METHOD_CLEAR = "clear";
     static final String METHOD_DUMP = "dump";
+    /** Hook 在小爱进程里没有我们的 data 目录权限，配置由本进程代读 */
+    static final String METHOD_CONFIG = "config";
+    /** 唯一允许读取配置的调用方 */
+    static final String CALLER_PKG = "com.miui.voiceassist";
 
     public static Uri uri() {
         return Uri.parse("content://" + AUTHORITY + "/");
@@ -51,6 +55,13 @@ public class LogProvider extends ContentProvider {
         try {
             if (METHOD_APPEND.equals(method) && extras != null) {
                 CallLogStore.append(ctx, extras.getString("type", CallLogStore.TYPE_INFO), extras.getString("text", ""));
+            } else if (METHOD_CONFIG.equals(method)) {
+                // 这份配置里有 API Key，只给小爱进程（也就是 Hook）读
+                String caller = getCallingPackage();
+                if (CALLER_PKG.equals(caller)) {
+                    return Config.snapshot(ctx);
+                }
+                return null;
             } else if (METHOD_CLEAR.equals(method)) {
                 CallLogStore.clear(ctx);
             } else if (METHOD_DUMP.equals(method)) {

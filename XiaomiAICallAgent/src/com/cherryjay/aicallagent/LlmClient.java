@@ -57,8 +57,8 @@ public final class LlmClient {
         try {
             conn = (HttpURLConnection) new URL(cfg.endpoint()).openConnection();
             conn.setRequestMethod("POST");
-            conn.setConnectTimeout(Math.max(3000, cfg.timeoutSec * 1000 / 2));
-            conn.setReadTimeout(Math.max(5000, cfg.timeoutSec * 1000));
+            conn.setConnectTimeout(Math.min(4000, Math.max(2500, cfg.timeoutSec * 500)));
+            conn.setReadTimeout(Math.min(8000, Math.max(4000, cfg.timeoutSec * 1000)));
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setRequestProperty("Accept", "application/json");
