@@ -2,11 +2,8 @@ package com.cherryjay.aicallagent;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,8 +24,9 @@ public class SettingsActivity extends Activity {
 
     private Switch swEnabled;
     private Switch swFallback;
-    private Switch swAiReply;
-    private TextView tvAiReplyState;
+    private Switch swManualTakeover;
+    private Switch swManualIgnore;
+    private TextView tvOpeningSummary;
     private EditText etBaseUrl;
     private EditText etApiKey;
     private EditText etModel;
@@ -54,14 +52,6 @@ public class SettingsActivity extends Activity {
     private Config mCfg;
 
     private final Handler main = new Handler(Looper.getMainLooper());
-
-    /** 与小爱进程里的 Hook 通讯 */
-    private static final String ACTION_CONTROL = "com.cherryjay.aicallagent.CONTROL";
-    private static final String ACTION_STATE = "com.cherryjay.aicallagent.STATE";
-    private static final String TARGET_PKG = "com.miui.voiceassist";
-
-    private BroadcastReceiver stateReceiver;
-    private boolean awaitingReply;
 
     private static final String[][] CATS = {
             {Category.TAKEOUT, "外卖送餐"},
@@ -117,86 +107,116 @@ public class SettingsActivity extends Activity {
         findViewById(R.id.btn_log).setOnClickListener(v ->
                 startActivity(new Intent(this, LogActivity.class)));
 
-        swAiReply = findViewById(R.id.sw_ai_reply);
-        tvAiReplyState = findViewById(R.id.tv_ai_reply_state);
-        bindAiReplySwitch();
-        registerStateReceiver();
+        swManualTakeover = findViewById(R.id.sw_manual_takeover);
+        swManualIgnore = findViewById(R.id.sw_manual_ignore);
+        tvOpeningSummary = findViewById(R.id.tv_opening_summary);
+        bindManualTakeover();
 
         setStatus("当前：" + currentSummary(), false);
     }
 
-    // ------------------------------------------------------- 通话中开关
+    // ------------------------------------- 手动接管（通话中点「小爱帮我回」）
 
-    /** 开关本身不做配置持久化，只是给 Hook 发一条指令；真实状态由通话进程回传 */
-    private void bindAiReplySwitch() {
-        swAiReply.setChecked(Config.prefs(this).getBoolean("ui_ai_reply", true));
-        swAiReply.setOnCheckedChangeListener((btn, checked) -> sendAiReply(checked));
+    private void bindManualTakeover() {
+        swManualTakeover.setChecked(mCfg.manualTakeover);
+        swManualIgnore.setChecked(mCfg.manualIgnoreCategory);
+        reflectManualOpts();
+
+        swManualTakeover.setOnCheckedChangeListener((b, on) -> {
+            mCfg.manualTakeover = on;
+            reflectManualOpts();
+        });
+        swManualIgnore.setOnCheckedChangeListener((b, on) -> mCfg.manualIgnoreCategory = on);
+
+        findViewById(R.id.row_opening).setOnClickListener(v -> editOpening());
+        updateOpeningSummary();
     }
 
-    private void sendAiReply(boolean on) {
-        Config.prefs(this).edit().putBoolean("ui_ai_reply", on).apply();
-
-        Intent i = new Intent(ACTION_CONTROL);
-        i.setPackage(TARGET_PKG);
-        i.putExtra("cmd", "ai_reply");
-        i.putExtra("on", on);
-        try {
-            sendBroadcast(i);
-        } catch (Throwable t) {
-            tvAiReplyState.setText("状态：发送失败 —— " + t.getMessage());
-            return;
-        }
-
-        awaitingReply = true;
-        tvAiReplyState.setText("状态：已发送「" + (on ? "继续应答" : "暂停") + "」，等待小爱响应…");
-        main.postDelayed(() -> {
-            if (awaitingReply) {
-                awaitingReply = false;
-                tvAiReplyState.setText("状态：小爱没有响应。确认 LSPosed 里已启用本模块，并重启过小爱进程。");
-            }
-        }, 2500);
+    private void reflectManualOpts() {
+        View box = findViewById(R.id.box_manual_opts);
+        box.setAlpha(swManualTakeover.isChecked() ? 1f : 0.38f);
     }
 
-    private void registerStateReceiver() {
-        stateReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context c, Intent intent) {
-                awaitingReply = false;
-                boolean inCall = intent.getBooleanExtra("inCall", false);
-                boolean paused = intent.getBooleanExtra("paused", true);
-                boolean acted = intent.getBooleanExtra("acted", false);
-
-                String s;
-                if (!inCall) {
-                    s = "状态：当前没有通话。开关会在下一通 AI 接听的通话里生效。";
-                } else if (!acted) {
-                    s = "状态：在通话中，但没能驱动引擎 —— 这通电话可能不是 AI 接听的。";
-                } else {
-                    s = "状态：通话中 · 小爱" + (paused ? "已暂停，把话头交给你" : "正在自动应答");
-                }
-                tvAiReplyState.setText(s);
-            }
-        };
-        IntentFilter f = new IntentFilter(ACTION_STATE);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(stateReceiver, f, Context.RECEIVER_EXPORTED);
+    private void updateOpeningSummary() {
+        boolean a = mCfg.openingAcquaintance != null && !mCfg.openingAcquaintance.trim().isEmpty();
+        boolean s = mCfg.openingStranger != null && !mCfg.openingStranger.trim().isEmpty();
+        String text;
+        if (a && s) {
+            text = "已设置：熟人 + 陌生号";
+        } else if (a) {
+            text = "已设置：熟人（陌生号用系统默认）";
+        } else if (s) {
+            text = "已设置：陌生号（熟人用系统默认）";
         } else {
-            registerReceiver(stateReceiver, f);
+            text = "点击设置。留空 = 用小爱默认开场白";
         }
+        tvOpeningSummary.setText(text);
     }
 
-    @Override
-    protected void onDestroy() {
-        if (stateReceiver != null) {
-            try {
-                unregisterReceiver(stateReceiver);
-            } catch (Throwable ignored) {
-            }
-            stateReceiver = null;
-        }
-        super.onDestroy();
+    private void editOpening() {
+        float d = getResources().getDisplayMetrics().density;
+
+        EditText etAcq = new EditText(this);
+        etAcq.setText(mCfg.openingAcquaintance);
+        etAcq.setHint("例：喂，你好，机主现在不方便接电话，有事跟我说我转告他。");
+        etAcq.setTextSize(13);
+        etAcq.setBackground(null);
+        etAcq.setMaxLines(3);
+
+        EditText etStr = new EditText(this);
+        etStr.setText(mCfg.openingStranger);
+        etStr.setHint("例：你好，机主在忙，我是他的语音助手，请问哪位？");
+        etStr.setTextSize(13);
+        etStr.setBackground(null);
+        etStr.setMaxLines(3);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (20 * d);
+        box.setPadding(pad, (int) (6 * d), pad, 0);
+        box.addView(label("熟人 / 通讯录联系人", d));
+        box.addView(etAcq);
+        box.addView(label("陌生号码", d));
+        box.addView(etStr);
+
+        TextView hint = new TextView(this);
+        hint.setText("接管接通后小爱说的第一句话。会写进小爱的开场白配置，留空则保留系统原话术。");
+        hint.setTextSize(11);
+        hint.setTextColor(0xFF6B7280);
+        hint.setPadding(0, (int) (10 * d), 0, 0);
+        box.addView(hint);
+
+        new AlertDialog.Builder(this)
+                .setTitle("接管开场白")
+                .setView(box)
+                .setPositiveButton("保存", (dlg, w) -> {
+                    mCfg.openingAcquaintance = etAcq.getText().toString().trim();
+                    mCfg.openingStranger = etStr.getText().toString().trim();
+                    mCfg = collect();
+                    mCfg.save(this);
+                    updateOpeningSummary();
+                    Toast.makeText(this, "开场白已保存", Toast.LENGTH_SHORT).show();
+                })
+                .setNeutralButton("清空", (dlg, w) -> {
+                    mCfg.openingAcquaintance = "";
+                    mCfg.openingStranger = "";
+                    mCfg = collect();
+                    mCfg.save(this);
+                    updateOpeningSummary();
+                    Toast.makeText(this, "已清空，恢复系统默认开场白", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
+    private TextView label(String text, float d) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(12);
+        t.setTextColor(0xFF6B7280);
+        t.setPadding(0, (int) (8 * d), 0, (int) (2 * d));
+        return t;
+    }
     private void bindPromptEntries() {
         TextView[] views = {tvTakeout, tvDelivery, tvSpam, tvService, tvContact, tvUnknown};
         for (int i = 0; i < CATS.length; i++) {
@@ -299,6 +319,12 @@ public class SettingsActivity extends Activity {
         c.useForService = swService.isChecked();
         c.useForContact = swContact.isChecked();
         c.useForUnknown = swUnknown.isChecked();
+        c.manualTakeover = swManualTakeover.isChecked();
+        c.manualIgnoreCategory = swManualIgnore.isChecked();
+        if (mCfg != null) {
+            c.openingAcquaintance = mCfg.openingAcquaintance;
+            c.openingStranger = mCfg.openingStranger;
+        }
         if (mCfg != null) {
             c.prompts.putAll(mCfg.prompts);
         }

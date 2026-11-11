@@ -30,6 +30,13 @@ public final class Config {
     public static final String K_USE_CONTACT = "use_contact";
     public static final String K_USE_UNKNOWN = "use_unknown";
 
+    // 通话中手动点「小爱帮我回」时的接管策略
+    public static final String K_MANUAL_TAKEOVER = "manual_takeover";
+    public static final String K_MANUAL_IGNORE_CATEGORY = "manual_ignore_category";
+    // 开场白（对应小爱自己的 ai_custom_opening_* 配置键，留空则用系统默认）
+    public static final String K_OPENING_ACQ = "opening_acquaintance";
+    public static final String K_OPENING_STR = "opening_stranger";
+
     public static final String DEF_BASE_URL = "https://api.deepseek.com/v1";
     public static final String DEF_MODEL = "deepseek-chat";
     public static final String DEF_SYSTEM_PROMPT =
@@ -67,6 +74,14 @@ public final class Config {
     /** 完全陌生的号码 */
     public boolean useForUnknown = true;
 
+    /** 通话中点右上角「AI 应答 → 小爱帮我回」时，是否用我们的大模型接管 */
+    public boolean manualTakeover = true;
+    /** 手动接管时忽略上面的分类开关：用户主动点了按钮，就是要 AI 接，不该被类型规则挡掉 */
+    public boolean manualIgnoreCategory = true;
+    /** 开场白：熟人 / 陌生号。空字符串 = 用系统默认 */
+    public String openingAcquaintance = "";
+    public String openingStranger = "";
+
     /** 各类型的场景提示词，key 为 Category 常量；空则用 Prompts 的默认值 */
     public final java.util.Map<String, String> prompts = new java.util.HashMap<>();
 
@@ -94,6 +109,10 @@ public final class Config {
         c.useForService = sp.getBoolean(K_USE_SERVICE, true);
         c.useForContact = sp.getBoolean(K_USE_CONTACT, true);
         c.useForUnknown = sp.getBoolean(K_USE_UNKNOWN, true);
+        c.manualTakeover = sp.getBoolean(K_MANUAL_TAKEOVER, true);
+        c.manualIgnoreCategory = sp.getBoolean(K_MANUAL_IGNORE_CATEGORY, true);
+        c.openingAcquaintance = sp.getString(K_OPENING_ACQ, "");
+        c.openingStranger = sp.getString(K_OPENING_STR, "");
         for (String cat : new String[]{Category.TAKEOUT, Category.DELIVERY, Category.SPAM,
                 Category.SERVICE, Category.CONTACT, Category.UNKNOWN}) {
             c.prompts.put(cat, sp.getString(Prompts.prefKey(cat), Prompts.defaultFor(cat)));
@@ -119,7 +138,11 @@ public final class Config {
                 .putBoolean(K_USE_SPAM, useForSpam)
                 .putBoolean(K_USE_SERVICE, useForService)
                 .putBoolean(K_USE_CONTACT, useForContact)
-                .putBoolean(K_USE_UNKNOWN, useForUnknown);
+                .putBoolean(K_USE_UNKNOWN, useForUnknown)
+                .putBoolean(K_MANUAL_TAKEOVER, manualTakeover)
+                .putBoolean(K_MANUAL_IGNORE_CATEGORY, manualIgnoreCategory)
+                .putString(K_OPENING_ACQ, openingAcquaintance)
+                .putString(K_OPENING_STR, openingStranger);
         for (java.util.Map.Entry<String, String> en : prompts.entrySet()) {
             e.putString(Prompts.prefKey(en.getKey()), en.getValue());
         }

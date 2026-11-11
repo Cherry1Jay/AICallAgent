@@ -1,12 +1,8 @@
 package com.cherryjay.aicallagent;
 
-import android.content.BroadcastReceiver;
 import android.content.ContentValues;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -50,14 +46,9 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String YELLOW_PAGE_CLS = "miui.yellowpage.YellowPageUtils";
     private static final String CONFIG_AUTHORITY = "ai-assist-call-config";
     private static final String KEY_REPLY_LOG = "ai_call_reply_log_content";
-    private static final String KEY_TRIGGER_ANSWER = "ai_call_trigger_answer";
-
-    /** App -> Hook：通话中开关指令 */
-    private static final String ACTION_CONTROL = "com.cherryjay.aicallagent.CONTROL";
-    /** Hook -> App：执行结果回传 */
-    private static final String ACTION_STATE = "com.cherryjay.aicallagent.STATE";
-    private static final String APP_PKG = "com.cherryjay.aicallagent";
-    private static final String CMD_AI_REPLY = "ai_reply";
+    /** 小爱自己的开场白配置键：就在 playGreeting 里读，写进去即生效 */
+    private static final String KEY_OPENING_ACQ = "ai_custom_opening_acquaintance";
+    private static final String KEY_OPENING_STR = "ai_custom_opening_stranger";
 
     private static final long SESSION_GAP_MS = 5 * 60 * 1000L;
     private static final long SPEAK_TIMEOUT_MS = 60 * 1000L;
@@ -74,9 +65,11 @@ public class MainHook implements IXposedHookLoadPackage {
     private static volatile String sNumber = "";
     private static volatile String sCallerName = "";
 
-    /** InCallService 实例，通话中开关要直接驱动它的 pause/resume */
-    private static volatile Object sService;
-    private static volatile boolean sReceiverInstalled;
+    /**
+     * 这通电话是不是用户手动点「AI 应答 → 小爱帮我回」升级来的。
+     * 手动接管算明确指令，不该再被来电分类开关挡掉。
+     */
+    private static volatile boolean sManualTakeover;
 
     private static final Map<String, Cached> sCategoryCache = new ConcurrentHashMap<>();
 
@@ -105,25 +98,14 @@ public class MainHook implements IXposedHookLoadPackage {
             XposedBridge.hookAllMethods(serviceCls, "onCallAdded", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    sService = param.thisObject;
-                    if (!sReceiverInstalled) {
-                        scheduleInstallReceiver();
-                    }
                     captureCall(param.args);
                 }
             });
             XposedBridge.hookAllMethods(serviceCls, "onCallRemoved", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
-                    sService = null;
-                    // 通话结束把开关键复位，避免影响下一通来电的自动接听策略
-                    try {
-                        Context ctx = AndroidAppHelper.currentApplication();
-                        if (ctx != null) {
-                            putConfig(ctx, KEY_TRIGGER_ANSWER, "");
-                        }
-                    } catch (Throwable ignored) {
-                    }
+                    sManualTakeover = false;
+                    resetHistory();
                 }
             });
         } catch (Throwable t) {
@@ -148,127 +130,98 @@ public class MainHook implements IXposedHookLoadPackage {
             log("引擎钩子失败：" + t);
         }
 
-        // 通话中开关：App 发广播 -> 这里以小爱进程的权限写配置 / 直接驱动引擎
-        // 小爱有 core / voice_trigger 等多个进程，只有主进程持有 InCallService，只在主进程注册
-        if (TARGET_PKG.equals(lp.processName)) {
-            scheduleInstallReceiver();
-        }
-    }
-
-    // ------------------------------------------------------- 通话中开关
-
-    /** 注入瞬间 Application 还没建好，需要重试；通话开始时也会再补一次 */
-    private void scheduleInstallReceiver() {
-        final Handler h = new Handler(Looper.getMainLooper());
-        final int[] tries = {0};
-        Runnable r = new Runnable() {
-            @Override
-            public void run() {
-                if (sReceiverInstalled) {
-                    return;
-                }
-                Context ctx = AndroidAppHelper.currentApplication();
-                if (ctx != null) {
-                    installControlReceiver(ctx);
-                    return;
-                }
-                if (++tries[0] < 20) {
-                    h.postDelayed(this, 500);
-                } else {
-                    log("控制通道：拿不到 Context，等通话开始再补注册");
-                }
-            }
-        };
-        h.postDelayed(r, 300);
-    }
-
-    private void installControlReceiver(final Context ctx) {
-        if (sReceiverInstalled) {
-            return;
-        }
+        // 通话中点右上角「AI 应答 → 小爱帮我回」
+        // 内部会走 takeOverCallWithAi -> createEngine(Call)，与自动接听共用同一个引擎。
         try {
-            BroadcastReceiver receiver = new BroadcastReceiver() {
+            Class<?> svcCls = XposedHelpers.findClass(SERVICE_CLS, cl);
+            XposedBridge.hookAllMethods(svcCls, "takeOverCallWithAi", new XC_MethodHook() {
                 @Override
-                public void onReceive(Context c, Intent intent) {
+                protected void beforeHookedMethod(MethodHookParam param) {
                     try {
-                        handleControl(ctx, intent);
+                        onManualTakeover(param);
                     } catch (Throwable t) {
-                        log("处理开关指令失败：" + t);
+                        log("处理手动接管出错：" + t);
                     }
                 }
-            };
-            IntentFilter filter = new IntentFilter(ACTION_CONTROL);
-            if (Build.VERSION.SDK_INT >= 33) {
-                ctx.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
-            } else {
-                ctx.registerReceiver(receiver, filter);
-            }
-            sReceiverInstalled = true;
-            log("控制通道就绪，等待 App 指令");
+            });
+            log("手动接管钩子已就位（takeOverCallWithAi）");
         } catch (Throwable t) {
-            log("registerReceiver 失败：" + t);
+            log("手动接管钩子失败：" + t);
+        }
+    }
+
+    // ------------------------------------- 手动「小爱帮我回」
+
+    /**
+     * 用户点通话页右上角 AI 应答、选「小爱帮我回」时，系统调
+     * OsbotInCallService.takeOverCallWithAi(Call)，内部 createEngine(Call) 建出
+     * CallConversationEngine —— 和自动接听是同一个引擎，所以对话回合照样落在
+     * handleCallerSentence 上，我们的模型天然能接住。
+     *
+     * 这里只解决两个会让用户觉得"没接上"的问题：
+     *  1) 若这通电话曾被 pauseAiAssist 暂停（通话中开关关过），takeOverCallWithAi 打开头
+     *     第一个 shouldContinueAiAssist("start takeover") 就会中断，表现为点了没反应。
+     *     接管前必须把 isAiAssistPaused 清掉。
+     *  2) 用户主动点按钮 = 明确要 AI 接，不该再被来电分类开关挡回去（默认豁免）。
+     */
+    private void onManualTakeover(XC_MethodHook.MethodHookParam param) {
+        final Object svc = param.thisObject;
+        try {
+            if (XposedHelpers.getBooleanField(svc, "isAiAssistPaused")) {
+                XposedHelpers.setBooleanField(svc, "isAiAssistPaused", false);
+                log("接管前清掉暂停标记（否则本轮接管会被立刻中断）");
+            }
+        } catch (Throwable t) {
+            log("复位暂停标记失败：" + t);
+        }
+
+        final Context ctx = AndroidAppHelper.currentApplication();
+        if (ctx == null) {
+            sManualTakeover = false;
+            log("手动接管：拿不到 Context，按原生走");
+            return;
+        }
+
+        final Config cfg = Config.load(ctx);
+        sManualTakeover = cfg.enabled && cfg.manualTakeover;
+        resetHistory();
+        writeOpening(ctx, cfg);
+
+        log("检测到手动接管（小爱帮我回）→ " + (sManualTakeover ? "本通用大模型" : "仍走原生话术"));
+        LogProvider.appendFromHook(ctx, CallLogStore.TYPE_INFO,
+                sManualTakeover ? "手动 AI 接管 · 已接入大模型" : "手动 AI 接管 · 使用原生话术");
+    }
+
+    /** 新一通电话从零开始，别把上一通的上下文串进来 */
+    private static void resetHistory() {
+        synchronized (LOCK) {
+            if (!sHistory.isEmpty()) {
+                log("手动接管，清空上一通对话上下文");
+            }
+            sHistory.clear();
+            sLastTurnAt = 0L;
         }
     }
 
     /**
-     * on=true  -> 恢复 AI 应答（resumeAiAssist）
-     * on=false -> 暂停 AI 应答（pauseAiAssist），把话头交回机主
-     * 两个方法都是 public，且内部幂等，可以直接调。
+     * 开场白走小爱自己的配置键（playGreeting 里读 ai_custom_opening_*）。
+     * 模块里留空表示不干预，保留用户在小爱原生设置里填的值。
      */
-    private void handleControl(Context ctx, Intent in) {
-        String cmd = in.getStringExtra("cmd");
-        if (!CMD_AI_REPLY.equals(cmd)) {
-            return;
-        }
-        boolean on = in.getBooleanExtra("on", false);
-
-        Object svc = sService;
-        boolean inCall = false;
-        if (svc != null) {
-            try {
-                inCall = XposedHelpers.getObjectField(svc, "currentCall") != null;
-            } catch (Throwable ignored) {
-            }
-        }
-
-        boolean acted = false;
-        if (svc != null && inCall) {
-            try {
-                XposedHelpers.callMethod(svc, on ? "resumeAiAssist" : "pauseAiAssist");
-                acted = true;
-            } catch (Throwable t) {
-                log("调用 " + (on ? "resumeAiAssist" : "pauseAiAssist") + " 失败：" + t);
-            }
-        }
-
-        // 同步给 InCallUI 的开关状态（通话结束时会复位）
-        if (inCall) {
-            putConfig(ctx, KEY_TRIGGER_ANSWER, on ? "true" : "false");
-        }
-
-        boolean paused = true;
-        if (svc != null) {
-            try {
-                paused = XposedHelpers.getBooleanField(svc, "isAiAssistPaused");
-            } catch (Throwable ignored) {
-            }
-        }
-
-        log("通话中开关：" + (on ? "开" : "关")
-                + "，通话中=" + inCall + "，已调用=" + acted + "，当前暂停=" + paused);
-        LogProvider.appendFromHook(ctx, CallLogStore.TYPE_INFO,
-                "通话中开关 → " + (on ? "小爱继续应答" : "小爱暂停")
-                        + (inCall ? "" : "（当前没有通话，仅记录）"));
-
+    private static void writeOpening(Context ctx, Config cfg) {
+        final String acq = cfg.openingAcquaintance == null ? "" : cfg.openingAcquaintance.trim();
+        final String str = cfg.openingStranger == null ? "" : cfg.openingStranger.trim();
         try {
-            Intent out = new Intent(ACTION_STATE);
-            out.setPackage(APP_PKG);
-            out.putExtra("inCall", inCall);
-            out.putExtra("paused", paused);
-            out.putExtra("requested", on);
-            out.putExtra("acted", acted);
-            ctx.sendBroadcast(out);
-        } catch (Throwable ignored) {
+            if (!acq.isEmpty()) {
+                putConfig(ctx, KEY_OPENING_ACQ, acq);
+            }
+            if (!str.isEmpty()) {
+                putConfig(ctx, KEY_OPENING_STR, str);
+            }
+            if (!acq.isEmpty() || !str.isEmpty()) {
+                log("已下发自定义开场白");
+            }
+        } catch (Throwable t) {
+            log("写开场白失败：" + t);
         }
     }
 
@@ -407,12 +360,17 @@ public class MainHook implements IXposedHookLoadPackage {
             String category = ct[0];
             String tag = ct[1];
             String label = Category.label(category);
-            if (!cfg.shouldHandle(category)) {
+            // 用户手动点了「小爱帮我回」= 明确要 AI 接，按设置可绕过分类开关
+            boolean manualBypass = sManualTakeover && cfg.manualIgnoreCategory;
+            if (!cfg.shouldHandle(category) && !manualBypass) {
                 log("来电类型=" + label + "（标签：" + tag + "），按设置交回原生");
                 LogProvider.appendFromHook(ctx, CallLogStore.TYPE_INFO,
                         "来电类型【" + label + "】→ 走小米原生" + (tag == null ? "" : "（标签：" + tag + "）"));
                 fallbackToNative(originalMethod, engine, originalArgs);
                 return;
+            }
+            if (manualBypass && !cfg.shouldHandle(category)) {
+                log("来电类型=" + label + " 本应走原生，但用户手动接管，改用大模型");
             }
 
             // 2) 调我们的模型
