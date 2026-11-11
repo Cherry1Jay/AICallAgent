@@ -134,17 +134,18 @@ public class MainHook implements IXposedHookLoadPackage {
         // 内部会走 takeOverCallWithAi -> createEngine(Call)，与自动接听共用同一个引擎。
         try {
             Class<?> svcCls = XposedHelpers.findClass(SERVICE_CLS, cl);
-            XposedBridge.hookAllMethods(svcCls, "takeOverCallWithAi", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    try {
-                        onManualTakeover(param);
-                    } catch (Throwable t) {
-                        log("处理手动接管出错：" + t);
-                    }
-                }
-            });
-            log("手动接管钩子已就位（takeOverCallWithAi）");
+            java.util.Set<XC_MethodHook.Unhook> unhooks =
+                    XposedBridge.hookAllMethods(svcCls, "takeOverCallWithAi", new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                onManualTakeover(param);
+                            } catch (Throwable t) {
+                                log("处理手动接管出错：" + t);
+                            }
+                        }
+                    });
+            log("手动接管钩子：" + unhooks.size() + " 个方法（0 表示没匹配到，接管会走原生）");
         } catch (Throwable t) {
             log("手动接管钩子失败：" + t);
         }
