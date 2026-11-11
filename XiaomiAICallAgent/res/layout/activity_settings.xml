@@ -1,0 +1,605 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_light"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingLeft="18dp"
+        android:paddingTop="28dp"
+        android:paddingRight="18dp"
+        android:paddingBottom="36dp">
+
+        <!-- 顶部标题 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textColor="@color/text_primary_light"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="18dp"
+            android:lineSpacingExtra="3dp"
+            android:text="拦截小米 AI 通话的对话引擎，改由你自己的大模型生成回复。接听、录音、语音合成仍由系统完成。"
+            android:textColor="@color/text_secondary_light"
+            android:textSize="13sp" />
+
+        <!-- 开关卡片 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/CardTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="启用大模型接管" />
+
+                <TextView
+                    style="@style/CardSub"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="关闭后 AI 通话完全走小米原生逻辑" />
+            </LinearLayout>
+
+            <Switch
+                android:id="@+id/sw_enabled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <!-- 模型配置 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/CardTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="模型接口" />
+
+            <TextView
+                style="@style/CardSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="14dp"
+                android:text="任何 OpenAI 兼容接口都可以：DeepSeek、月之暗面、通义、OpenRouter、本地 Ollama / vLLM。" />
+
+            <TextView
+                style="@style/FieldLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="接口地址" />
+
+            <EditText
+                android:id="@+id/et_base_url"
+                style="@style/FieldInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="https://api.deepseek.com/v1"
+                android:inputType="textUri"
+                android:maxLines="1" />
+
+            <TextView
+                style="@style/FieldLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="API Key" />
+
+            <EditText
+                android:id="@+id/et_api_key"
+                style="@style/FieldInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="sk-..."
+                android:inputType="textPassword"
+                android:maxLines="1" />
+
+            <TextView
+                style="@style/FieldLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="模型名称" />
+
+            <EditText
+                android:id="@+id/et_model"
+                style="@style/FieldInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="deepseek-chat"
+                android:inputType="text"
+                android:maxLines="1" />
+        </LinearLayout>
+
+        <!-- 人设 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/CardTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="接电话的人设" />
+
+            <TextView
+                style="@style/CardSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="12dp"
+                android:text="系统提示词。写得越像你自己，对方越听不出来。回复会被压成适合朗读的短句。" />
+
+            <EditText
+                android:id="@+id/et_prompt"
+                style="@style/FieldInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="top|start"
+                android:inputType="textMultiLine"
+                android:lineSpacingExtra="4dp"
+                android:minLines="6" />
+        </LinearLayout>
+
+        <!-- 来电类型分流 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/CardTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="按来电类型分流" />
+
+            <TextView
+                style="@style/CardSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="6dp"
+                android:text="打开 = 用你的大模型；关闭 = 沿用小米原生 AI 话术。类型来自系统黄页标记，识别不到时按号码特征判断。点类型名可单独改这个场景的提示词。" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_takeout"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="外卖送餐"
+                        android:textColor="@color/brand"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="美团、饿了么、跑腿等" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_takeout"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/stroke_light" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_delivery"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="快递物流"
+                        android:textColor="@color/brand"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="顺丰、驿站、同城急送等" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_delivery"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/stroke_light" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_spam"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="广告推销"
+                        android:textColor="@color/brand"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="骚扰、中介、保险、贷款等。默认关闭，交给原生话术更好打发" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_spam"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/stroke_light" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_service"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="客服官方"
+                        android:textColor="@color/brand"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="银行、运营商、95/400 开头的号码" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_service"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/stroke_light" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_contact"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="通讯录联系人"
+                        android:textColor="@color/brand"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="已存号码的熟人，建议保持开启但也要注意语气" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_contact"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/stroke_light" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingTop="10dp"
+                android:paddingBottom="2dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_unknown"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="陌生号码"
+                        android:textColor="@color/brand"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="无任何标记的来电" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_unknown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 高级 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                style="@style/CardTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="高级" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="超时时间（秒）"
+                    android:textColor="@color/text_primary_light"
+                    android:textSize="14sp" />
+
+                <EditText
+                    android:id="@+id/et_timeout"
+                    style="@style/FieldInput"
+                    android:layout_width="90dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:inputType="number"
+                    android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="记忆轮数（0 = 不带上下文）"
+                    android:textColor="@color/text_primary_light"
+                    android:textSize="14sp" />
+
+                <EditText
+                    android:id="@+id/et_history"
+                    style="@style/FieldInput"
+                    android:layout_width="90dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:inputType="number"
+                    android:maxLines="1" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="失败时回落到小爱"
+                        android:textColor="@color/text_primary_light"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="超时或报错时，改用原生回复，避免通话冷场" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_fallback"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 操作 -->
+        <Button
+            android:id="@+id/btn_save"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/bg_button"
+            android:text="保存设置"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_test"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginRight="5dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_button_ghost"
+                android:text="测试连接"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary_light"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btn_log"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginLeft="5dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_button_ghost"
+                android:text="通话记录"
+                android:textAllCaps="false"
+                android:textColor="@color/text_primary_light"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:lineSpacingExtra="3dp"
+            android:text=""
+            android:textColor="@color/text_secondary_light"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:lineSpacingExtra="3dp"
+            android:text="使用前需在 LSPosed 中启用本模块并勾选「小爱同学」，然后重启小爱同学所在进程（强制停止即可）。通话音频采集与合成由系统 AI 通话完成，本模块只替换文本生成环节。"
+            android:textColor="@color/text_secondary_light"
+            android:textSize="11sp" />
+
+    </LinearLayout>
+</ScrollView>

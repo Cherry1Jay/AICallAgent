@@ -1,0 +1,21 @@
+# 构建产物
+build/
+*.apk
+*.apk.idsig
+*.dex
+
+# 签名文件，绝不入库
+keystore.jks
+*.jks
+*.keystore
+
+# 反编译与临时产物
+dec_*/
+apk/
+jadx/
+jadx.zip
+lspd/
+shot*.png
+icon_master.png
+sources.txt
+classes.txt

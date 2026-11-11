@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowBackground">@color/bg_light</item>
+        <item name="android:statusBarColor">@color/bg_light</item>
+        <item name="android:navigationBarColor">@color/bg_light</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">@color/brand</item>
+    </style>
+
+    <style name="CardTitle">
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/text_primary_light</item>
+    </style>
+
+    <style name="CardSub">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/text_secondary_light</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+    </style>
+
+    <style name="FieldLabel">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/text_secondary_light</item>
+        <item name="android:layout_marginBottom">6dp</item>
+    </style>
+
+    <style name="FieldInput">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/text_primary_light</item>
+        <item name="android:textColorHint">#9AA1AE</item>
+        <item name="android:background">@drawable/bg_input</item>
+        <item name="android:paddingLeft">14dp</item>
+        <item name="android:paddingRight">14dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+        <item name="android:minHeight">46dp</item>
+    </style>
+
+</resources>

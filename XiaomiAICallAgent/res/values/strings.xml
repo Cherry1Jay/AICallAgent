@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AI 通话接管</string>
+    <string name="module_desc">拦截小米「AI 通话」的对话引擎，用 DeepSeek 等 OpenAI 兼容大模型接管通话回复。作用域：小爱同学（com.miui.voiceassist）。</string>
+    <string name="log_title">通话记录</string>
+
+    <string-array name="xposedscope">
+        <item>com.miui.voiceassist</item>
+    </string-array>
+</resources>
