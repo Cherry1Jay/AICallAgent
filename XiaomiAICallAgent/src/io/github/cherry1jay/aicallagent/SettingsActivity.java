@@ -24,6 +24,7 @@ public class SettingsActivity extends Activity {
 
     private Switch swEnabled;
     private Switch swFallback;
+    private Switch swAllowThinking;
     private Switch swManualTakeover;
     private Switch swManualIgnore;
     private TextView tvOpeningSummary;
@@ -69,6 +70,7 @@ public class SettingsActivity extends Activity {
 
         swEnabled = findViewById(R.id.sw_enabled);
         swFallback = findViewById(R.id.sw_fallback);
+        swAllowThinking = findViewById(R.id.sw_allow_thinking);
         etBaseUrl = findViewById(R.id.et_base_url);
         etApiKey = findViewById(R.id.et_api_key);
         etModel = findViewById(R.id.et_model);
@@ -285,6 +287,7 @@ public class SettingsActivity extends Activity {
     private void bind(Config c) {
         swEnabled.setChecked(c.enabled);
         swFallback.setChecked(c.fallback);
+        swAllowThinking.setChecked(c.allowThinking);
         etBaseUrl.setText(c.baseUrl);
         etApiKey.setText(c.apiKey);
         etModel.setText(c.model);
@@ -304,6 +307,7 @@ public class SettingsActivity extends Activity {
         Config c = new Config();
         c.enabled = swEnabled.isChecked();
         c.fallback = swFallback.isChecked();
+        c.allowThinking = swAllowThinking.isChecked();
         c.baseUrl = etBaseUrl.getText().toString().trim();
         c.apiKey = etApiKey.getText().toString().trim();
         c.model = etModel.getText().toString().trim();

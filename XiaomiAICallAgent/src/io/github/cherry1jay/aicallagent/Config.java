@@ -29,6 +29,8 @@ public final class Config {
     public static final String K_TIMEOUT = "timeout";
     public static final String K_TEMPERATURE = "temperature";
     public static final String K_STRIP_THINKING = "strip_thinking";
+    /** 是否允许模型先思考再回答。默认关：思考型模型在电话里只会把正文挤没，还会被念出来 */
+    public static final String K_ALLOW_THINKING = "allow_thinking";
     public static final String K_MAX_HISTORY = "max_history";
     public static final String K_FALLBACK = "fallback";
     public static final String K_DEBUG = "debug";
@@ -70,6 +72,13 @@ public final class Config {
     public boolean fallback = true;
     /** 是否过滤掉模型输出的括号思考内容 */
     public boolean stripThinking = true;
+    /**
+     * 允许模型思考（reasoning）。默认关闭。
+     *
+     * 关上之后：请求里不鼓励思考、响应里也绝不拿 reasoning_content 当回复；
+     * 正文为空就直接判失败走兜底话术。打开才允许从思考内容里捞台词。
+     */
+    public boolean allowThinking = false;
     /** 保留多少轮对话历史 */
     public int maxHistory = 12;
     public float temperature = 0.7f;
@@ -129,6 +138,7 @@ public final class Config {
         b.putInt(K_TIMEOUT, c.timeoutSec);
         b.putFloat(K_TEMPERATURE, c.temperature);
         b.putBoolean(K_STRIP_THINKING, c.stripThinking);
+        b.putBoolean(K_ALLOW_THINKING, c.allowThinking);
         b.putInt(K_MAX_HISTORY, c.maxHistory);
         b.putBoolean(K_FALLBACK, c.fallback);
         b.putBoolean(K_DEBUG, c.debug);
@@ -167,6 +177,7 @@ public final class Config {
             c.timeoutSec = b.getInt(K_TIMEOUT, 12);
             c.temperature = b.getFloat(K_TEMPERATURE, 0.7f);
             c.stripThinking = b.getBoolean(K_STRIP_THINKING, true);
+            c.allowThinking = b.getBoolean(K_ALLOW_THINKING, false);
             c.maxHistory = b.getInt(K_MAX_HISTORY, 12);
             c.fallback = b.getBoolean(K_FALLBACK, true);
             c.debug = b.getBoolean(K_DEBUG, true);
@@ -201,6 +212,7 @@ public final class Config {
         c.timeoutSec = sp.getInt(K_TIMEOUT, 12);
         c.temperature = sp.getFloat(K_TEMPERATURE, 0.7f);
         c.stripThinking = sp.getBoolean(K_STRIP_THINKING, true);
+        c.allowThinking = sp.getBoolean(K_ALLOW_THINKING, false);
         c.maxHistory = sp.getInt(K_MAX_HISTORY, 12);
         c.fallback = sp.getBoolean(K_FALLBACK, true);
         c.debug = sp.getBoolean(K_DEBUG, true);
@@ -230,6 +242,7 @@ public final class Config {
                 .putInt(K_TIMEOUT, timeoutSec)
                 .putFloat(K_TEMPERATURE, temperature)
                 .putBoolean(K_STRIP_THINKING, stripThinking)
+                .putBoolean(K_ALLOW_THINKING, allowThinking)
                 .putInt(K_MAX_HISTORY, maxHistory)
                 .putBoolean(K_FALLBACK, fallback)
                 .putBoolean(K_DEBUG, debug)

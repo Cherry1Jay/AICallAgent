@@ -55,7 +55,17 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final String KEY_OPENING_STR = "ai_custom_opening_stranger";
 
     private static final long SESSION_GAP_MS = 5 * 60 * 1000L;
-    private static final long SPEAK_TIMEOUT_MS = 8 * 1000L;
+    /**
+     * 播报超时不能写死。
+     *
+     * 之前是固定 8 秒：只要模型这一轮回答得长一点（对方滔滔不绝说一大段，
+     * 模型跟着答得多），TTS 还没播完就被判超时、提前补发 onAgentTurnComplete，
+     * 引擎收到「回合结束」就把还没出声的音频掐了——现象就是字幕有、声音没有。
+     * 现在按字数给：中文 TTS 约 4~5 字/秒，每字留 400ms，另加 6 秒启动余量。
+     */
+    private static final long SPEAK_TIMEOUT_BASE_MS = 6 * 1000L;
+    private static final long SPEAK_TIMEOUT_PER_CHAR_MS = 400L;
+    private static final long SPEAK_TIMEOUT_MAX_MS = 60 * 1000L;
     private static final long CATEGORY_TTL_MS = 10 * 60 * 1000L;
 
     private static ExecutorService sWorker;
@@ -65,6 +75,16 @@ public class MainHook implements IXposedHookLoadPackage {
     private static long sLastTurnAt;
 
     private static Object sSuspendedSentinel;
+
+    /**
+     * 同时进行中的回合数。
+     *
+     * 对方一口气说很长一段时，引擎的 ASR 会分句多次回调 handleCallerSentence，
+     * 上一轮的 TTS 还没播完就又来一轮，两轮抢同一个播放器就会「字幕有、声音没有」。
+     * 这个计数只用于日志定位。
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger sInflight =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /** 当前通话信息，由 OsbotInCallService.onCallAdded 捕获 */
     private static volatile String sNumber = "";
@@ -410,6 +430,10 @@ public class MainHook implements IXposedHookLoadPackage {
 
         // 先把这一回合拦下，避免原生模型也说话（重了会串音）
         param.setResult(null);
+        int inflight = sInflight.incrementAndGet();
+        log("回合#" + inflight + " 收到对方语句（" + sentence.length() + " 字）"
+                + (inflight > 1 ? " ⚠ 上一轮还没收尾" : "")
+                + "：" + (sentence.length() > 60 ? sentence.substring(0, 60) + "…" : sentence));
         logAsync(ctx, CallLogStore.TYPE_REMOTE, sentence);
 
         // 看门狗：回合已经被我们拦下，任何一环卡死都必须由我们补一句话推进状态机，
@@ -446,6 +470,7 @@ public class MainHook implements IXposedHookLoadPackage {
                 }
                 turn.reply = LlmClient.chat(cfg, snapshotHistory(t0), sentence,
                         cfg.promptFor(turn.category));
+                log("模型原始：" + LlmClient.lastDebug);
                 return null;
             });
             Thread th = new Thread(task, "aicall-agent-turn");
@@ -487,6 +512,7 @@ public class MainHook implements IXposedHookLoadPackage {
             speakAndFinish(engine, turn.reply);
             } finally {
                 turnDone.set(true);
+                sInflight.decrementAndGet();
             }
         });
     }
@@ -510,25 +536,50 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     /**
+     * 按文本长度估算播报超时，见 SPEAK_TIMEOUT_* 的注释。
+     */
+    private static long speakTimeoutMs(String text) {
+        int n = text == null ? 0 : text.length();
+        long ms = SPEAK_TIMEOUT_BASE_MS + n * SPEAK_TIMEOUT_PER_CHAR_MS;
+        return Math.min(ms, SPEAK_TIMEOUT_MAX_MS);
+    }
+
+    /** 补发回合结束信号，把引擎状态机推下去 */
+    private static void fireTurnComplete(Object engine) {
+        try {
+            Object cb = XposedHelpers.getObjectField(engine, "onAgentTurnComplete");
+            if (cb != null) {
+                XposedHelpers.callMethod(cb, "invoke");
+                log("回合结束信号已补发");
+            }
+        } catch (Throwable t) {
+            log("补发回合结束失败：" + t);
+        }
+    }
+
+    /**
      * 借用引擎自己的 speakFn 播报，播报完成后补发 onAgentTurnComplete。
      */
     private void speakAndFinish(final Object engine, final String text) {
         final AtomicBoolean finished = new AtomicBoolean(false);
         final Handler main = new Handler(Looper.getMainLooper());
+        final long t0 = System.currentTimeMillis();
+        final int len = text == null ? 0 : text.length();
+        final long timeout = speakTimeoutMs(text);
 
         Runnable completeTurn = () -> {
             if (!finished.compareAndSet(false, true)) {
                 return;
             }
-            try {
-                Object cb = XposedHelpers.getObjectField(engine, "onAgentTurnComplete");
-                if (cb != null) {
-                    XposedHelpers.callMethod(cb, "invoke");
-                    log("回合结束信号已补发");
-                }
-            } catch (Throwable t) {
-                log("补发回合结束失败：" + t);
+            fireTurnComplete(engine);
+        };
+
+        Runnable forceTurn = () -> {
+            if (!finished.compareAndSet(false, true)) {
+                return;
             }
+            log("播报超时（" + timeout + "ms，文本 " + len + " 字），强制收尾");
+            fireTurnComplete(engine);
         };
 
         try {
@@ -538,16 +589,18 @@ public class MainHook implements IXposedHookLoadPackage {
                 completeTurn.run();
                 return;
             }
-            Object continuation = newContinuation(speakFn.getClass().getClassLoader(), () -> {
-                log("播报完成");
-                main.post(completeTurn);
-            });
+            log("开始播报（" + len + " 字，超时预算 " + timeout + "ms）");
+            Object continuation = newContinuation(speakFn.getClass().getClassLoader(),
+                    "TTS", () -> {
+                        log("播报完成（" + (System.currentTimeMillis() - t0) + "ms）");
+                        main.post(completeTurn);
+                    });
             Object ret = XposedHelpers.callMethod(speakFn, "invoke", text, continuation);
             if (ret != sSuspendedSentinel) {
                 log("播报同步返回，直接收尾");
                 completeTurn.run();
             } else {
-                main.postDelayed(completeTurn, SPEAK_TIMEOUT_MS);
+                main.postDelayed(forceTurn, timeout);
             }
         } catch (Throwable t) {
             log("播报失败：" + t);
@@ -641,7 +694,7 @@ public class MainHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static Object newContinuation(ClassLoader cl, final Runnable onResume) throws Exception {
+    private static Object newContinuation(ClassLoader cl, final String tag, final Runnable onResume) throws Exception {
         Class<?> contCls = Class.forName("kotlin.coroutines.Continuation", false, cl);
         final Object emptyCtx;
         try {
@@ -656,6 +709,12 @@ public class MainHook implements IXposedHookLoadPackage {
                 return emptyCtx;
             }
             if ("resumeWith".equals(name)) {
+                // 协程里抛异常也会走到这里，参数是 Result.failure。
+                // 以前直接当成功，TTS 内部报错就被当成「播报完成」吞掉了。
+                String r = (args != null && args.length > 0) ? String.valueOf(args[0]) : "null";
+                if (r != null && r.startsWith("Failure")) {
+                    log(tag + " 挂起体抛异常：" + r);
+                }
                 if (onResume != null) {
                     onResume.run();
                 }

@@ -16,8 +16,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 PROJ="$ROOT/XiaomiAICallAgent"
 BUILD="$ROOT/build"
 
-VERSION_NAME="${VERSION_NAME:-1.2}"
-VERSION_CODE="${VERSION_CODE:-3}"
+VERSION_NAME="${VERSION_NAME:-1.4}"
+VERSION_CODE="${VERSION_CODE:-5}"
 OUT="$ROOT/AICallAgent-$VERSION_NAME.apk"
 
 # ---- 平台差异 ---------------------------------------------------------------
@@ -74,10 +74,16 @@ echo "==> 1/6 编译资源"
 "$BT/aapt2$EXE" compile --dir "$(W "$PROJ/res")" -o "$(W "$BUILD/res.zip")"
 
 echo "==> 2/6 链接资源"
+# aapt2 的 --version-code/--version-name 会被 Manifest 里的静态声明覆盖，
+# 所以先把 Manifest 里的版本号替换掉再交给 aapt2，保证下面的参数真的生效。
+MANIFEST="$BUILD/AndroidManifest.xml"
+sed -e "s/android:versionCode=\"[0-9]*\"/android:versionCode=\"$VERSION_CODE\"/" \
+    -e "s/android:versionName=\"[^\"]*\"/android:versionName=\"$VERSION_NAME\"/" \
+    "$PROJ/AndroidManifest.xml" > "$MANIFEST"
 "$BT/aapt2$EXE" link \
   -o "$(W "$BUILD/unsigned.apk")" \
   -I "$(W "$PLATFORM")" \
-  --manifest "$(W "$PROJ/AndroidManifest.xml")" \
+  --manifest "$(W "$MANIFEST")" \
   -A "$(W "$PROJ/assets")" \
   --java "$(W "$BUILD/gen")" \
   --min-sdk-version 29 \

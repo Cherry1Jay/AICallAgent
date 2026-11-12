@@ -274,6 +274,39 @@
                 android:hint="deepseek-chat"
                 android:inputType="text"
                 android:maxLines="1" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/CardTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="允许模型思考" />
+
+                    <TextView
+                        style="@style/CardSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="默认关闭。思考型模型（deepseek-reasoner 一类）开着时会把 token 全耗在思考上，正文变空、回复变长，甚至把思考过程直接念给对方听。关掉就是让它凭第一反应回答。" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/sw_allow_thinking"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- 人设 -->
