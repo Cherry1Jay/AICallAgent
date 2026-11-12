@@ -165,7 +165,10 @@ adb logcat | grep AICallAgent
 ```bash
 export ANDROID_HOME=/path/to/Android/Sdk
 bash build.sh
-# 产物：AICallAgent-1.2.apk
+# 产物：AICallAgent-1.4.apk
+
+# 指定版本号（tag 与 APK 名都跟着变）
+VERSION_CODE=6 VERSION_NAME=1.5 bash build.sh
 ```
 
 脚本流程：`aapt2 compile` → `aapt2 link` → `javac` → `d8` → `jar` 塞 dex → `zipalign` → `apksigner`。
